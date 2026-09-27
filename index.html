@@ -482,29 +482,52 @@ document.addEventListener('click',e=>{
   const view=e.target.closest('[data-view]');
   const add=e.target.closest('[data-add]');
   if(view)viewProduct(view.dataset.view);
-  if(add)addToCart(add.dataset.add,'');
+  if(add){
+    const p=products.find(x=>x.id===add.dataset.add);
+    const topup=isTopup(p);
+    if(topup)viewProduct(add.dataset.add);else addToCart(add.dataset.add,'');
+  }
 });
 
+function isTopup(p){
+  if(!p)return false;
+  const c=String(p.category||'').toLowerCase().replace(/[-_ ]/g,'');
+  return c==='topup'||c==='digitaltopup'||String(p.type||'').toLowerCase()==='topup';
+}
+function isPhysical(p){ return !!p && !isTopup(p); }
 function viewProduct(id){
   const p=products.find(x=>x.id===id);if(!p)return;
-  const needsUid=/free fire|diamond|gaming/i.test((p.name||'')+' '+(p.category||''));
+  const needsUid=isTopup(p);
   modal(`
     <h2>${esc(p.name)}</h2>
     <img src="${esc(p.imageUrl||placeholderImage(p.name))}" style="width:100%;max-height:300px;object-fit:cover;border-radius:16px;margin:8px 0">
     <p class="muted">${esc(p.description||'')}</p>
     <h2 style="color:var(--orange)">${money(p.price)}</h2>
-    ${needsUid?`<div class="notice"><b>Game/Digital Order</b><br>প্রয়োজনে আপনার IN GAME UID দিন।</div><input class="input" id="gameUid" placeholder="IN GAME UID" style="margin-top:10px">`:''}
+    ${needsUid?`<div class="notice"><b>TOP-UP ORDER</b><br>এই Top-Up-এর জন্য শুধু আপনার IN GAME UID দিন। কোনো delivery address লাগবে না।</div><input class="input" id="gameUid" placeholder="IN GAME UID" inputmode="numeric" required style="margin-top:10px">`:''}
     <div class="actions">
-      <button class="btn primary" id="modalAdd">ADD TO CART</button>
-      <button class="btn secondary" id="modalBuy">BUY NOW</button>
+      <button class="btn primary" id="modalAdd">${needsUid?'ADD TOP-UP':'ADD TO CART'}</button>
+      <button class="btn secondary" id="modalBuy">${needsUid?'ORDER NOW':'BUY NOW'}</button>
     </div>
   `);
-  $('modalAdd').onclick=()=>{addToCart(id,$('gameUid')?.value||'');closeModal()};
-  $('modalBuy').onclick=()=>{addToCart(id,$('gameUid')?.value||'');closeModal();page('cart')};
+  $('modalAdd').onclick=()=>{
+    const uid=$('gameUid')?.value.trim()||'';
+    if(needsUid&&!uid)return toast('IN GAME UID দিন');
+    addToCart(id,uid);closeModal();
+  };
+  $('modalBuy').onclick=()=>{
+    const uid=$('gameUid')?.value.trim()||'';
+    if(needsUid&&!uid)return toast('IN GAME UID দিন');
+    addToCart(id,uid);closeModal();page('cart');
+  };
 }
 function addToCart(id,gameUid=''){
   const p=products.find(x=>x.id===id);if(!p)return;
   if(Number(p.stock||0)<1)return toast('Out of stock');
+  if(cart.length){
+    const existing=products.find(x=>x.id===cart[0].productId);
+    if(existing && isTopup(existing)!==isTopup(p))return toast('Top-Up ও Product একসাথে order করা যাবে না');
+  }
+  if(isTopup(p)&&!gameUid)return toast('IN GAME UID দিন');
   const x=cart.find(i=>i.productId===id&&i.gameUid===gameUid);
   if(x)x.qty++;else cart.push({productId:id,qty:1,gameUid});
   localStorage.setItem('PRIMEX_CART',JSON.stringify(cart));updateUI();toast('Added to cart');
@@ -541,15 +564,16 @@ async function checkout(){
   if(!currentUser)return authModal();
   if(!cart.length)return toast('Cart is empty');
   let subtotal=0;
+  const topupOrder=isTopup(products.find(x=>x.id===cart[0].productId));
   cart.forEach(i=>{const p=products.find(x=>x.id===i.productId);if(p)subtotal+=Number(p.price||0)*i.qty});
   modal(`
-    <h2>Checkout</h2>
-    <div class="notice">bKash: <b>${BKASH}</b><br>ঢাকার ভিতরে delivery fee <b>৳60</b> • ঢাকার বাইরে <b>৳100</b></div>
+    <h2>${topupOrder?'Top-Up Order':'Checkout'}</h2>
+    <div class="notice">bKash: <b>${BKASH}</b>${topupOrder?'<br>Top-Up order-এর জন্য শুধু IN GAME UID লাগবে।':'<br>ঢাকার ভিতরে delivery fee <b>৳60</b> • ঢাকার বাইরে <b>৳100</b>'}</div>
     <form class="form" id="checkoutForm" style="margin-top:10px">
-      <div class="formgrid"><input class="input" id="cPhone" value="${esc(userData?.phone||'')}" placeholder="Phone Number" required><select class="select" id="area"><option value="dhaka">ঢাকার ভিতরে — ৳60</option><option value="outside">ঢাকার বাইরে — ৳100</option></select></div>
+      ${topupOrder?`<input class="input" id="topupUid" value="${esc(cart[0].gameUid||'')}" placeholder="IN GAME UID" required>`:`<div class="formgrid"><input class="input" id="cPhone" value="${esc(userData?.phone||'')}" placeholder="Phone Number" required><select class="select" id="area"><option value="dhaka">ঢাকার ভিতরে — ৳60</option><option value="outside">ঢাকার বাইরে — ৳100</option></select></div>
       <div class="formgrid"><input class="input" id="district" placeholder="জেলা" required><input class="input" id="upazila" placeholder="সদর / উপজেলা / থানা" required></div>
       <div class="formgrid"><input class="input" id="village" placeholder="গ্রাম / এলাকা" required><input class="input" id="road" placeholder="রোড / বাড়ি নম্বর" required></div>
-      <textarea class="textarea" id="address" placeholder="বিস্তারিত ঠিকানা" required>${esc(userData?.address||'')}</textarea>
+      <textarea class="textarea" id="address" placeholder="বিস্তারিত ঠিকানা" required>${esc(userData?.address||'')}</textarea>`}
       <select class="select" id="payMethod"><option value="bkash">bKash — Transaction ID</option><option value="wallet">Wallet — Use Wallet Balance</option></select>
       <div id="payExtra"></div>
       <div class="notice">bKash হলে Admin Transaction ID verify করবে। Wallet হলে Admin approve করে wallet থেকে টাকা কাটবে।</div>
@@ -564,18 +588,21 @@ async function checkout(){
   $('payMethod').onchange=payFields;payFields();
   $('checkoutForm').onsubmit=async e=>{
     e.preventDefault();
-    const fee=$('area').value==='dhaka'?60:100,total=subtotal+fee;
+    const fee=topupOrder?0:($('area').value==='dhaka'?60:100),total=subtotal+fee;
     if($('payMethod').value==='wallet'&&Number(userData?.wallet||0)<total)return toast('Wallet balance is not enough');
-    const items=cart.map(i=>{const p=products.find(x=>x.id===i.productId);return {productId:p.id,name:p.name,price:p.price,qty:i.qty,gameUid:i.gameUid||''}});
+    if(topupOrder && !$('topupUid').value.trim())return toast('IN GAME UID দিন');
+    const items=cart.map(i=>{const p=products.find(x=>x.id===i.productId);return {productId:p.id,name:p.name,price:p.price,qty:i.qty,gameUid:topupOrder?$('topupUid').value.trim():(i.gameUid||''),orderType:topupOrder?'Top-Up':'Product'}});
     try{
       await addDoc(collection(db,'orders'),{
         userId:currentUser.uid,userName:userData?.name||currentUser.displayName||'',email:currentUser.email,
-        phone:$('cPhone').value.trim(),district:$('district').value.trim(),upazila:$('upazila').value.trim(),
-        village:$('village').value.trim(),road:$('road').value.trim(),address:$('address').value.trim(),
-        deliveryArea:$('area').value,deliveryFee:fee,items,subtotal,total,
+        orderType:topupOrder?'Top-Up':'Product',
+        phone:topupOrder?'':$('cPhone').value.trim(),district:topupOrder?'':$('district').value.trim(),upazila:topupOrder?'':$('upazila').value.trim(),
+        village:topupOrder?'':$('village').value.trim(),road:topupOrder?'':$('road').value.trim(),address:topupOrder?'':$('address').value.trim(),
+        deliveryArea:topupOrder?'digital':$('area').value,deliveryFee:fee,items,subtotal,total,
+        gameUid:topupOrder?$('topupUid').value.trim():'',
         txid:$('payMethod').value==='bkash'?$('txid').value.trim():'',
         payment:$('payMethod').value==='wallet'?'Wallet Pending':'Pending',
-        paymentMethod:$('payMethod').value,status:'Order Pending',delivery:'Pending',createdAt:serverTimestamp()
+        paymentMethod:$('payMethod').value,status:'Order Pending',delivery:topupOrder?'Digital':'Pending',createdAt:serverTimestamp()
       });
       cart=[];localStorage.removeItem('PRIMEX_CART');updateUI();closeModal();page('orders');toast('Order submitted to Admin');
     }catch(err){toast(err.message)}
@@ -591,7 +618,8 @@ async function renderOrders(){
       <div class="panel">
         <div class="between"><b>ORDER #${o.id.slice(-8)}</b><span class="status ${o.payment==='Approved'?'approved':o.payment==='Rejected'?'rejected':'pending'}">${esc(o.status||'Order Pending')}</span></div>
         <p>${(o.items||[]).map(i=>`${esc(i.name)} × ${i.qty}${i.gameUid?' • UID '+esc(i.gameUid):''}`).join('<br>')}</p>
-        <p><b>Total ${money(o.total)}</b> • Delivery: ${esc(o.delivery||'Pending')}</p>
+        <p><b>Total ${money(o.total)}</b> • ${o.orderType==='Top-Up'?'IN GAME UID: '+esc(o.gameUid||((o.items||[])[0]?.gameUid)||'-'):'Delivery: '+esc(o.delivery||'Pending')}</p>
+        ${o.orderType==='Product'?`<p class="muted">Address: ${esc([o.district,o.upazila,o.village,o.road,o.address].filter(Boolean).join(', '))}</p>`:''}
         <p class="muted">Payment: ${esc(o.payment||'Pending')} • TXID: ${esc(o.txid||'')}</p>
       </div>`).join(''):'<div class="panel empty">No orders yet.</div>';
   }catch(err){$('ordersBox').innerHTML='<div class="panel empty">Order load error. If Firebase asks for an index, create the suggested Firestore index.</div>'}
@@ -636,6 +664,9 @@ function renderProfile(){
         <div class="username">@${esc(p.username||'user')}</div>
       </div>
     </div>
+    <div class="panel" style="margin-top:4px;border-color:#553a18;background:linear-gradient(135deg,#17130e,#111319)">
+      <div class="between"><div><small class="muted">WALLET BALANCE</small><h2 style="color:var(--orange);margin-top:4px">${money(p.wallet||0)}</h2></div><button class="btn primary small" id="profileAddMoney">＋ ADD MONEY</button></div>
+    </div>
     <div class="infoList">
       <div class="infoRow"><div class="infoLabel"><span class="infoIcon">✉</span>Email</div><div class="infoValue">${esc(currentUser.email||p.email||'-')}</div></div>
       <div class="infoRow"><div class="infoLabel"><span class="infoIcon">☎</span>Phone</div><div class="infoValue">${esc(p.phone||'-')}</div></div>
@@ -649,6 +680,7 @@ function renderProfile(){
       ${isAdmin?'<button class="btn secondary" id="profileAdmin">⚙ ADMIN DASHBOARD</button>':''}
     </div>`;
   $('changePhoto').onclick=changePhoto;
+  $('profileAddMoney').onclick=()=>page('wallet');
   $('editProfile').onclick=editProfile;
   $('profileLogout').onclick=async()=>{await signOut(auth);toast('Logged out')};
   if($('profileAdmin'))$('profileAdmin').onclick=()=>page('admin');
@@ -741,7 +773,7 @@ async function adminOrders(){
       <td><b>#${o.id.slice(-8)}</b><br>${(o.items||[]).map(i=>`${esc(i.name)} × ${i.qty}${i.gameUid?'<br>UID: '+esc(i.gameUid):''}`).join('<br>')}<br><b>${money(o.total)}</b><br>TXID: ${esc(o.txid||'')}</td>
       <td>${esc(o.userName||'')}<br>UID: ${esc(o.userId||'')}<br>${esc(o.phone||'')}</td>
       <td><span class="status ${o.payment==='Approved'?'approved':o.payment==='Rejected'?'rejected':'pending'}">${esc(o.payment||'Pending')}</span><br>${esc(o.status||'')}</td>
-      <td>${esc(o.district||'')}, ${esc(o.upazila||'')}<br>${esc(o.village||'')}, ${esc(o.road||'')}<br>${esc(o.address||'')}<br>Fee: ${money(o.deliveryFee)}</td>
+      <td>${o.orderType==='Top-Up'?`<b>TOP-UP</b><br>UID: ${esc(o.gameUid||((o.items||[])[0]?.gameUid)||'')}`:`${esc(o.district||'')}, ${esc(o.upazila||'')}<br>${esc(o.village||'')}, ${esc(o.road||'')}<br>${esc(o.address||'')}<br>Fee: ${money(o.deliveryFee)}`}</td>
       <td>
         ${o.payment==='Pending'?`<button class="btn green small" data-approve="${o.id}">Approve</button> <button class="btn red small" data-reject="${o.id}">Reject</button>`:''}
         ${o.paymentMethod==='wallet'&&o.payment==='Wallet Pending'?`<button class="btn secondary small" data-wallet-order="${o.id}">Wallet Approve</button>`:''}
